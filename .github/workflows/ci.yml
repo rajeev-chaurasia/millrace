@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --frozen --extra dev --extra dbt --extra dashboard
+      - run: uv run ruff format --check .
+      - run: uv run ruff check .
+      - run: uv run pyright
+      - run: uv run pytest tests/unit --cov --cov-report=xml
+      - run: uvx pip-audit
+
+  dbt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MILLRACE_DUCKDB_PATH: ${{ runner.temp }}/millrace.duckdb
+      MILLRACE_S3_ACCESS_KEY: local-ci
+      MILLRACE_S3_SECRET_KEY: local-ci-secret
+      MILLRACE_S3_ENDPOINT: localhost:9000
+      MILLRACE_S3_BUCKET: millrace
+      MILLRACE_RUN_ID: ci
+      MILLRACE_BATCH_ID: "1"
+      MILLRACE_DATA_INTERVAL_START: "2026-01-01T00:00:00+00:00"
+      MILLRACE_DATA_INTERVAL_END: "2026-01-02T00:00:00+00:00"
+      MILLRACE_DBT_SCHEMA: candidate_ci
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --frozen --extra dbt --extra dev
+      - run: uv run dbt parse --project-dir dbt --profiles-dir dbt
+      - run: uv run sqlfluff lint dbt/models dbt/tests
+
+  compose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: cp .env.example .env
+      - run: docker compose config --quiet

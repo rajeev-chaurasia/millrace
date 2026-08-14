@@ -1,0 +1,157 @@
+version: 2
+
+models:
+  - name: dim_customer
+    description: Current customer dimension at the candidate batch cutoff.
+    config:
+      meta:
+        grain: one row per customer
+        owner: data-engineering
+    columns:
+      - name: customer_id
+        description: Stable customer dimension key.
+        data_tests: [not_null, unique]
+      - name: email
+        description: Normalized customer email.
+        data_tests: [not_null]
+      - name: customer_status
+        description: Current source customer status.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, inactive]
+      - name: pipeline_run_id
+        description: Pipeline run that built the candidate.
+        data_tests: [not_null]
+      - name: pipeline_batch_id
+        description: Closed batch cutoff used by the run.
+        data_tests: [not_null]
+  - name: dim_product
+    description: Current product dimension at the candidate batch cutoff.
+    config:
+      meta:
+        grain: one row per product
+        owner: data-engineering
+    columns:
+      - name: product_id
+        description: Stable product dimension key.
+        data_tests: [not_null, unique]
+      - name: sku
+        description: Stock keeping unit.
+        data_tests: [not_null, unique]
+      - name: unit_price
+        description: Current catalog price.
+        data_tests: [not_null, non_negative]
+      - name: is_active
+        description: Whether the product is active in the source catalog.
+        data_tests: [not_null]
+      - name: pipeline_run_id
+        description: Pipeline run that built the candidate.
+        data_tests: [not_null]
+  - name: dim_date
+    description: Calendar dimension spanning source orders and the requested data interval.
+    config:
+      meta:
+        grain: one row per calendar day
+        owner: data-engineering
+    columns:
+      - name: date_key
+        description: Integer date key in YYYYMMDD format.
+        data_tests: [not_null, unique]
+      - name: date_day
+        description: Calendar date.
+        data_tests: [not_null, unique]
+      - name: pipeline_run_id
+        description: Pipeline run that built the candidate.
+        data_tests: [not_null]
+  - name: fact_order
+    description: Order fact with revenue and quantity aggregated from its order lines.
+    config:
+      meta:
+        grain: one row per order
+        owner: data-engineering
+    columns:
+      - name: order_id
+        description: Stable order fact key.
+        data_tests: [not_null, unique]
+      - name: customer_id
+        description: Customer dimension key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_id
+      - name: order_date_key
+        description: Order date dimension key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: order_total
+        description: Sum of calculated child line amounts.
+        data_tests: [not_null, non_negative]
+      - name: pipeline_run_id
+        description: Pipeline run that built the candidate.
+        data_tests: [not_null]
+  - name: fact_order_item
+    description: Order line fact retaining captured price and calculated line amount.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            column_names: [order_id, line_number]
+    config:
+      meta:
+        grain: one row per order line
+        owner: data-engineering
+    columns:
+      - name: order_item_id
+        description: Stable order line fact key.
+        data_tests: [not_null, unique]
+      - name: order_id
+        description: Parent order fact key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('fact_order')
+                field: order_id
+      - name: line_number
+        description: Line number within the parent order.
+        data_tests: [not_null]
+      - name: customer_id
+        description: Customer dimension key inherited from the order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_id
+      - name: product_id
+        description: Product dimension key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_product')
+                field: product_id
+      - name: order_date_key
+        description: Order date dimension key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_key
+      - name: quantity
+        description: Purchased unit count.
+        data_tests: [not_null, positive]
+      - name: line_amount
+        description: Quantity multiplied by captured unit price.
+        data_tests: [not_null, non_negative]
+      - name: pipeline_run_id
+        description: Pipeline run that built the candidate.
+        data_tests: [not_null]

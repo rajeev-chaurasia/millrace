@@ -1,0 +1,18 @@
+version: 2
+
+exposures:
+  - name: retail_operations_dashboard
+    label: Millrace Retail Dashboard
+    type: dashboard
+    maturity: high
+    description: >
+      Streamlit dashboard backed only by stable analytics views published after candidate
+      validation succeeds.
+    depends_on:
+      - ref('dim_customer')
+      - ref('dim_product')
+      - ref('dim_date')
+      - ref('fact_order')
+      - ref('fact_order_item')
+    owner:
+      name: Millrace Data Engineering

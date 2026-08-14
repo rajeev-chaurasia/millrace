@@ -1,0 +1,95 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: Typed customer state constrained to the requested batch cutoff.
+    columns:
+      - name: customer_id
+        description: Stable customer key.
+        data_tests: [not_null, unique]
+      - name: email
+        description: Normalized customer email address.
+        data_tests: [not_null]
+      - name: customer_status
+        description: Normalized source customer status.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [active, inactive]
+      - name: source_batch_id
+        description: Last source batch represented by the customer.
+        data_tests: [not_null]
+  - name: stg_products
+    description: Typed product catalog state constrained to the requested batch cutoff.
+    columns:
+      - name: product_id
+        description: Stable product key.
+        data_tests: [not_null, unique]
+      - name: sku
+        description: Source stock keeping unit.
+        data_tests: [not_null, unique]
+      - name: unit_price
+        description: Current catalog price.
+        data_tests:
+          - not_null
+          - non_negative
+      - name: is_active
+        description: Whether the product is active in the source catalog.
+        data_tests: [not_null]
+  - name: stg_orders
+    description: Typed order header state constrained to the requested batch cutoff.
+    columns:
+      - name: order_id
+        description: Stable order key.
+        data_tests: [not_null, unique]
+      - name: customer_id
+        description: Customer placing the order.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: order_status
+        description: Normalized source order status.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [pending, paid, shipped, cancelled]
+  - name: stg_order_items
+    description: Typed order line state constrained to the requested batch cutoff.
+    columns:
+      - name: order_item_id
+        description: Stable order line key.
+        data_tests: [not_null, unique]
+      - name: order_id
+        description: Parent order key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_orders')
+                field: order_id
+      - name: line_number
+        description: Line number within the parent order.
+        data_tests: [not_null]
+      - name: product_id
+        description: Purchased product key.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('stg_products')
+                field: product_id
+      - name: quantity
+        description: Purchased unit count.
+        data_tests:
+          - not_null
+          - positive
+      - name: unit_price
+        description: Unit price captured on the order line.
+        data_tests:
+          - not_null
+          - non_negative

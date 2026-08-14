@@ -1,0 +1,44 @@
+version: 2
+
+macros:
+  - name: millrace_required_var
+    description: Fails compilation when a required pipeline run variable is absent or blank.
+    arguments:
+      - name: name
+        type: string
+        description: Required variable name.
+  - name: millrace_run_id
+    description: Returns a path-safe, non-empty pipeline run identifier.
+  - name: millrace_batch_id
+    description: Returns a positive integer batch cutoff.
+  - name: millrace_interval_start
+    description: Returns the required inclusive data interval start.
+  - name: millrace_interval_end
+    description: Returns the required exclusive data interval end.
+  - name: test_non_negative
+    description: Rejects negative numeric values.
+    arguments:
+      - name: model
+        type: relation
+        description: Relation under test.
+      - name: column_name
+        type: string
+        description: Numeric column under test.
+  - name: test_positive
+    description: Rejects zero and negative numeric values.
+    arguments:
+      - name: model
+        type: relation
+        description: Relation under test.
+      - name: column_name
+        type: string
+        description: Numeric column under test.
+  - name: test_unique_combination_of_columns
+    description: Rejects duplicate rows at a declared composite grain.
+    arguments:
+      - name: model
+        type: relation
+        description: Relation under test.
+      - name: column_names
+        type: list
+        description: Columns that jointly identify a row.

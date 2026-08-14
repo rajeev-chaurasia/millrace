@@ -1,0 +1,119 @@
+control_schema: control
+
+entities:
+  - name: customers
+    source:
+      relation: source_history.customers
+      batch_column: batch_id
+      sequence_column: history_id
+      deleted_column: is_deleted
+    target:
+      relation: "{candidate_schema}.validation_customers"
+      batch_column: batch_id
+    key_columns: [customer_id]
+    columns:
+      - {name: customer_id, canonical_type: integer}
+      - {name: email, canonical_type: text}
+      - {name: first_name, canonical_type: text}
+      - {name: last_name, canonical_type: text}
+      - {name: updated_at, canonical_type: timestamp}
+
+  - name: products
+    source:
+      relation: source_history.products
+      batch_column: batch_id
+      sequence_column: history_id
+      deleted_column: is_deleted
+    target:
+      relation: "{candidate_schema}.validation_products"
+      batch_column: batch_id
+    key_columns: [product_id]
+    columns:
+      - {name: product_id, canonical_type: integer}
+      - {name: sku, canonical_type: text}
+      - {name: name, canonical_type: text}
+      - {name: category, canonical_type: text}
+      - {name: unit_price, canonical_type: decimal}
+      - {name: active, canonical_type: boolean}
+      - {name: updated_at, canonical_type: timestamp}
+    partitions:
+      - name: category
+        columns: [category]
+    aggregates:
+      - name: maximum_price
+        operation: max
+        column: unit_price
+
+  - name: orders
+    source:
+      relation: source_history.orders
+      batch_column: batch_id
+      sequence_column: history_id
+      deleted_column: is_deleted
+    target:
+      relation: "{candidate_schema}.validation_orders"
+      batch_column: batch_id
+    key_columns: [order_id]
+    columns:
+      - {name: order_id, canonical_type: integer}
+      - {name: customer_id, canonical_type: integer}
+      - {name: ordered_at, canonical_type: timestamp}
+      - {name: status, canonical_type: text}
+      - {name: updated_at, canonical_type: timestamp}
+    partitions:
+      - name: status
+        columns: [status]
+    aggregates:
+      - name: earliest_order
+        operation: min
+        column: ordered_at
+      - name: latest_order
+        operation: max
+        column: ordered_at
+
+  - name: order_items
+    source:
+      relation: source_history.order_items
+      batch_column: batch_id
+      sequence_column: history_id
+      deleted_column: is_deleted
+    target:
+      relation: "{candidate_schema}.validation_order_items"
+      batch_column: batch_id
+    key_columns: [order_id, line_number]
+    columns:
+      - {name: order_id, canonical_type: integer}
+      - {name: line_number, canonical_type: integer}
+      - {name: product_id, canonical_type: integer}
+      - {name: quantity, canonical_type: integer}
+      - {name: unit_price, canonical_type: decimal}
+      - {name: updated_at, canonical_type: timestamp}
+    partitions:
+      - name: product
+        columns: [product_id]
+    aggregates:
+      - name: quantity_by_product
+        operation: sum
+        column: quantity
+        group_by: [product_id]
+      - name: price_sum_by_product
+        operation: sum
+        column: unit_price
+        group_by: [product_id]
+
+publications:
+  - view: analytics.dim_customer
+    relation: "{candidate_schema}.dim_customer"
+    batch_column: pipeline_batch_id
+  - view: analytics.dim_product
+    relation: "{candidate_schema}.dim_product"
+    batch_column: pipeline_batch_id
+  - view: analytics.dim_date
+    relation: "{candidate_schema}.dim_date"
+    batch_column: pipeline_batch_id
+  - view: analytics.fact_order
+    relation: "{candidate_schema}.fact_order"
+    batch_column: pipeline_batch_id
+  - view: analytics.fact_order_item
+    relation: "{candidate_schema}.fact_order_item"
+    batch_column: pipeline_batch_id

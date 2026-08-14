@@ -1,0 +1,61 @@
+version: 2
+
+models:
+  - name: int_orders_enriched
+    description: Order headers enriched with customer attributes and aggregated line metrics.
+    columns:
+      - name: order_id
+        description: Stable order key.
+        data_tests: [not_null, unique]
+      - name: customer_id
+        description: Customer placing the order.
+        data_tests: [not_null]
+      - name: order_total
+        description: Sum of calculated order line amounts.
+        data_tests: [not_null, non_negative]
+  - name: int_order_items_enriched
+    description: Order lines enriched with their order and product attributes.
+    columns:
+      - name: order_item_id
+        description: Stable order line key.
+        data_tests: [not_null, unique]
+      - name: order_id
+        description: Parent order key.
+        data_tests: [not_null]
+      - name: product_id
+        description: Purchased product key.
+        data_tests: [not_null]
+      - name: line_amount
+        description: Quantity multiplied by captured unit price.
+        data_tests: [not_null, non_negative]
+  - name: validation_customers
+    description: Candidate customer projection matching the reconciliation target contract.
+    columns:
+      - name: customer_id
+        description: Reconciliation customer key.
+        data_tests: [not_null, unique]
+  - name: validation_products
+    description: Candidate product projection matching the reconciliation target contract.
+    columns:
+      - name: product_id
+        description: Reconciliation product key.
+        data_tests: [not_null, unique]
+  - name: validation_orders
+    description: Candidate order projection matching the reconciliation target contract.
+    columns:
+      - name: order_id
+        description: Reconciliation order key.
+        data_tests: [not_null, unique]
+  - name: validation_order_items
+    description: Candidate order line projection matching the reconciliation target contract.
+    data_tests:
+      - unique_combination_of_columns:
+          arguments:
+            column_names: [order_id, line_number]
+    columns:
+      - name: order_id
+        description: Reconciliation parent order key.
+        data_tests: [not_null]
+      - name: line_number
+        description: Reconciliation line number.
+        data_tests: [not_null]

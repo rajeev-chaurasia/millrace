@@ -1,0 +1,92 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "millrace"
+version = "0.1.0"
+description = "Fail-closed Kafka to warehouse ELT pipeline"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "boto3>=1.35,<2",
+  "duckdb>=1.4,<2",
+  "prometheus-client>=0.21,<1",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "pyyaml>=6.0,<7",
+]
+
+[project.optional-dependencies]
+spark = ["pyspark==4.0.1"]
+dbt = ["dbt-core>=1.10,<1.12", "dbt-duckdb>=1.10,<1.11"]
+dashboard = ["pandas>=2.2,<3", "plotly>=6.0,<7", "streamlit>=1.42,<2"]
+dev = [
+  "httpx>=0.28,<1",
+  "pyright>=1.1.400,<2",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6.0,<7",
+  "ruff>=0.11,<1",
+  "sqlfluff>=3.3,<4",
+  "sqlfluff-templater-dbt>=3.3,<4",
+  "types-boto3>=1.35,<2",
+  "types-pyyaml>=6.0,<7",
+]
+
+[project.scripts]
+millrace = "millrace.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/millrace"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-config --strict-markers -q"
+testpaths = ["tests"]
+markers = [
+  "integration: requires local services",
+  "e2e: requires the complete Compose stack",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src", "tests", "airflow/dags", "dashboard"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF", "ANN", "ARG", "S"]
+ignore = ["ANN401"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S106"]
+"airflow/dags/**/*.py" = ["ANN201"]
+
+[tool.pyright]
+include = ["src", "tests", "airflow/dags", "dashboard"]
+exclude = [
+  "airflow/dags",
+  "dashboard",
+  "dbt",
+  "data",
+  "artifacts",
+  "src/millrace/streaming/spark_job.py",
+  "tests/unit/dashboard",
+]
+pythonVersion = "3.11"
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"
+reportMissingTypeStubs = "none"
+
+[tool.coverage.run]
+branch = true
+source = ["millrace"]
+omit = [
+  "src/millrace/orchestration/runtime.py",
+  "src/millrace/streaming/spark_job.py",
+  "src/millrace/validation/__main__.py",
+]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true

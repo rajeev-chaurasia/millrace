@@ -1,0 +1,86 @@
+version: 2
+
+sources:
+  - name: silver
+    description: >
+      Deterministic retail entity state for the requested pipeline run. Files are read directly
+      from the immutable MinIO silver run prefix.
+    meta:
+      external_location: "{{ var('silver_root', 's3://' ~ env_var('MILLRACE_S3_BUCKET', 'millrace') ~ '/silver') }}/run_id={{ var('run_id', env_var('MILLRACE_RUN_ID', 'local')) }}/table={name}/*.parquet"
+    tables:
+      - name: customers
+        description: Customer state as of the run batch cutoff.
+        columns:
+          - name: customer_id
+            description: Source customer identifier.
+            data_tests: [not_null, unique]
+          - name: batch_id
+            description: Last source batch represented by this row.
+            data_tests: [not_null]
+          - name: updated_at
+            description: Source update timestamp.
+            data_tests: [not_null]
+      - name: products
+        description: Product catalog state as of the run batch cutoff.
+        columns:
+          - name: product_id
+            description: Source product identifier.
+            data_tests: [not_null, unique]
+          - name: batch_id
+            description: Last source batch represented by this row.
+            data_tests: [not_null]
+          - name: updated_at
+            description: Source update timestamp.
+            data_tests: [not_null]
+      - name: orders
+        description: Order header state as of the run batch cutoff.
+        columns:
+          - name: order_id
+            description: Source order identifier.
+            data_tests: [not_null, unique]
+          - name: customer_id
+            description: Customer placing the order.
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('silver', 'customers')
+                    field: customer_id
+          - name: batch_id
+            description: Last source batch represented by this row.
+            data_tests: [not_null]
+          - name: updated_at
+            description: Source update timestamp.
+            data_tests: [not_null]
+      - name: order_items
+        description: Order line state as of the run batch cutoff.
+        data_tests:
+          - unique_combination_of_columns:
+              arguments:
+                column_names: [order_id, line_number]
+        columns:
+          - name: order_id
+            description: Parent order identifier.
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('silver', 'orders')
+                    field: order_id
+          - name: line_number
+            description: Source line number within the order.
+            data_tests: [not_null]
+          - name: product_id
+            description: Purchased product identifier.
+            data_tests:
+              - not_null
+              - relationships:
+                  arguments:
+                    to: source('silver', 'products')
+                    field: product_id
+          - name: batch_id
+            description: Last source batch represented by this row.
+            data_tests: [not_null]
+          - name: updated_at
+            description: Source update timestamp.
+            data_tests: [not_null]

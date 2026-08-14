@@ -1,0 +1,17 @@
+---
+description: Millrace engineering and writing standards
+alwaysApply: true
+---
+
+# Millrace Standards
+
+- Apply SOLID, DRY, and YAGNI. Prefer small modules with explicit interfaces.
+- Keep Python fully typed. Enforce Ruff and strict Pyright checks.
+- Remove unused imports, dead code, placeholders, and speculative abstractions.
+- Write concise comments only when they explain a non-obvious decision.
+- Use deterministic, idempotent data operations and fail closed on validation errors.
+- Keep configuration externalized and validate it at process boundaries.
+- Never expose secrets or place credentials in tracked files.
+- Do not mention generated assistance in source, documentation, commits, or review text.
+- Do not use em dashes.
+- Use concise, imperative commit subjects when commits are explicitly requested.

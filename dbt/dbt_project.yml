@@ -1,0 +1,38 @@
+name: millrace
+version: "1.0.0"
+config-version: 2
+
+profile: millrace
+
+model-paths: ["models"]
+macro-paths: ["macros"]
+test-paths: ["tests"]
+docs-paths: ["docs"]
+target-path: target
+clean-targets:
+  - target
+  - dbt_packages
+
+require-dbt-version: [">=1.10.0", "<1.12.0"]
+
+flags:
+  send_anonymous_usage_stats: false
+
+quoting:
+  database: false
+  schema: false
+  identifier: false
+
+models:
+  millrace:
+    +persist_docs:
+      relation: true
+      columns: true
+    staging:
+      +materialized: view
+      +tags: ["staging"]
+    intermediate:
+      +materialized: view
+      +tags: ["intermediate"]
+    marts:
+      +tags: ["marts", "candidate"]

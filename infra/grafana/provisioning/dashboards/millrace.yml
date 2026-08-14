@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: Millrace
+    orgId: 1
+    folder: Millrace
+    type: file
+    disableDeletion: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
