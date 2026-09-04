@@ -18,3 +18,7 @@ The publication layer must expose `analytics.current_validation_status` with one
 `run_id`, `status`, `validated_at`, `published_at`, `checks_passed`, and `checks_failed`. If that
 optional operational view is absent, business metrics remain available and the dashboard displays
 a warning.
+
+This dashboard is DuckDB-only. Snowflake is a supported warehouse target for the pipeline and the
+reconciliation oracle (see [docs/architecture.md](../docs/architecture.md)), but reading Snowflake
+here is not implemented; treat it as a known limitation rather than an oversight.

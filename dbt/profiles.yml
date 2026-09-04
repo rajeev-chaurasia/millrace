@@ -18,3 +18,20 @@ millrace:
           url_style: path
           use_ssl: false
           scope: "s3://{{ env_var('MILLRACE_S3_BUCKET', 'millrace') }}"
+    snowflake_candidate:
+      type: snowflake
+      account: "{{ env_var('MILLRACE_SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('MILLRACE_SNOWFLAKE_USER', '') }}"
+      # Key-pair auth (private_key_path) takes priority whenever it is set,
+      # matching millrace.warehouse.snowflake_target.connect(). Needed for
+      # any account that enforces MFA: plain password auth is rejected there
+      # for programmatic connections, and dbt-snowflake at this pinned
+      # version has no separate MFA-bypass token support.
+      password: "{{ env_var('MILLRACE_SNOWFLAKE_PASSWORD', '') }}"
+      private_key_path: "{{ env_var('MILLRACE_SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      private_key_passphrase: "{{ env_var('MILLRACE_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE', '') }}"
+      role: "{{ env_var('MILLRACE_SNOWFLAKE_ROLE', '') }}"
+      warehouse: "{{ env_var('MILLRACE_SNOWFLAKE_WAREHOUSE', '') }}"
+      database: "{{ env_var('MILLRACE_SNOWFLAKE_DATABASE', '') }}"
+      schema: "{{ env_var('MILLRACE_DBT_SCHEMA', 'CANDIDATE') }}"
+      threads: 4

@@ -37,6 +37,15 @@ class FailingReader:
         raise RuntimeError("injected query failure")
 
 
+class StaticTombstoneReader:
+    def __init__(self, deleted_keys: Sequence[Row]) -> None:
+        self._deleted_keys = deleted_keys
+
+    def fetch_deleted_keys(self, entity: EntityRule, context: RunContext) -> Sequence[Row]:
+        del entity, context
+        return self._deleted_keys
+
+
 class CapturingSink:
     def __init__(self, destination: Path) -> None:
         self.destination = destination
@@ -87,27 +96,92 @@ def test_mismatch_and_query_error_fail_closed(tmp_path: Path) -> None:
     assert "injected query failure" in (query_error.checks[0].error or "")
 
 
+def test_deleted_key_absent_from_target_passes(tmp_path: Path) -> None:
+    rows = [{"id": 1, "group": "east", "amount": 10}]
+    service = _service(
+        tmp_path,
+        StaticReader(rows),
+        StaticReader(rows),
+        CapturingAudit(),
+        tombstones=StaticTombstoneReader([{"id": 2}]),
+    )
+
+    report, _ = service.validate(_context())
+
+    delete_check = next(check for check in report.checks if check.name == "deleted_absent")
+    assert report.status is ValidationStatus.PASSED
+    assert delete_check.passed
+    assert delete_check.actual == []
+
+
+def test_deleted_key_still_present_in_target_fails_closed(tmp_path: Path) -> None:
+    rows = [{"id": 1, "group": "east", "amount": 10}]
+    candidate_rows = [*rows, {"id": 2, "group": "east", "amount": 4}]
+    service = _service(
+        tmp_path,
+        StaticReader(rows),
+        StaticReader(candidate_rows),
+        CapturingAudit(),
+        tombstones=StaticTombstoneReader([{"id": 2}]),
+    )
+
+    report, _ = service.validate(_context())
+
+    delete_check = next(check for check in report.checks if check.name == "deleted_absent")
+    assert report.status is ValidationStatus.FAILED
+    assert not delete_check.passed
+    assert delete_check.actual == ["I:2"]
+
+
+def test_configured_deletes_without_a_tombstone_reader_fail_closed(tmp_path: Path) -> None:
+    # An entity that declares deleted_column but has no reader wired cannot
+    # verify deletes. Emitting `deleted_absent` as passed there would report
+    # a check that examined nothing, so it must surface as a failure instead.
+    rows = [{"id": 1, "group": "east", "amount": 10}]
+    service = ValidationService(
+        config=_config(with_deletes=True),
+        source=StaticReader(rows),
+        candidate=StaticReader(rows),
+        report_sink=CapturingSink(tmp_path / "report.json"),
+        audit_writer=CapturingAudit(),
+        tombstones=None,
+    )
+
+    report, _ = service.validate(_context())
+
+    assert report.status is ValidationStatus.FAILED
+    assert not any(check.name == "deleted_absent" for check in report.checks)
+    assert "no tombstone reader is available" in (report.checks[0].error or "")
+
+
 def _service(
     tmp_path: Path,
     source: StaticReader,
     candidate: StaticReader | FailingReader,
     audit: CapturingAudit,
+    *,
+    tombstones: StaticTombstoneReader | None = None,
 ) -> ValidationService:
     return ValidationService(
-        config=_config(),
+        config=_config(with_deletes=tombstones is not None),
         source=source,
         candidate=candidate,
         report_sink=CapturingSink(tmp_path / "report.json"),
         audit_writer=audit,
+        tombstones=tombstones,
     )
 
 
-def _config() -> ReconciliationConfig:
+def _config(*, with_deletes: bool = False) -> ReconciliationConfig:
     return ReconciliationConfig(
         entities=(
             EntityRule(
                 name="sales",
-                source=SourceRule(relation="history.sales", batch_column="batch_id"),
+                source=SourceRule(
+                    relation="history.sales",
+                    batch_column="batch_id",
+                    deleted_column="is_deleted" if with_deletes else None,
+                ),
                 target=TargetRule(
                     relation="{candidate_schema}.sales",
                     batch_column="batch_id",

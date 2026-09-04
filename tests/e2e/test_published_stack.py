@@ -137,7 +137,11 @@ from millrace.contracts import RunContext
 from millrace.settings import get_settings
 from millrace.validation.audit import DuckDbAuditWriter, JsonReportSink
 from millrace.validation.configuration import candidate_schema, load_reconciliation_config
-from millrace.validation.readers import DuckDbCandidateReader, PostgresHistoryReader
+from millrace.validation.readers import (
+    DuckDbCandidateReader,
+    PostgresHistoryReader,
+    PostgresTombstoneReader,
+)
 from millrace.validation.service import ValidationService
 from millrace.warehouse import configure_object_store
 
@@ -186,6 +190,7 @@ service = ValidationService(
     candidate=DuckDbCandidateReader(connection),
     report_sink=JsonReportSink(Path(settings.reports_directory) / "e2e"),
     audit_writer=DuckDbAuditWriter(connection, config.control_schema),
+    tombstones=PostgresTombstoneReader(settings.postgres_dsn),
 )
 report, _ = service.validate(failure_context)
 current = connection.execute(

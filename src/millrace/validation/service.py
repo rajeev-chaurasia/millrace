@@ -10,6 +10,7 @@ from millrace.validation.audit import AuditWriter, ReportSink
 from millrace.validation.canonical import (
     Row,
     aggregate_values,
+    canonicalize,
     column_checksum,
     grouped_counts,
 )
@@ -22,7 +23,7 @@ from millrace.validation.models import (
     ValidationReport,
     ValidationStatus,
 )
-from millrace.validation.readers import SnapshotReader
+from millrace.validation.readers import SnapshotReader, TombstoneReader
 
 
 class ValidationFailedError(RuntimeError):
@@ -41,12 +42,14 @@ class ValidationService:
         candidate: SnapshotReader,
         report_sink: ReportSink,
         audit_writer: AuditWriter,
+        tombstones: TombstoneReader | None = None,
     ) -> None:
         self._config = config
         self._source = source
         self._candidate = candidate
         self._report_sink = report_sink
         self._audit_writer = audit_writer
+        self._tombstones = tombstones
 
     def validate(self, context: RunContext) -> tuple[ValidationReport, Path]:
         checks: list[CheckResult] = []
@@ -54,7 +57,10 @@ class ValidationService:
             try:
                 source_rows = self._source.fetch_rows(entity, context)
                 candidate_rows = self._candidate.fetch_rows(entity, context)
-                checks.extend(self._compare_entity(entity, source_rows, candidate_rows))
+                deleted_keys = self._fetch_deleted_keys(entity, context)
+                checks.extend(
+                    self._compare_entity(entity, source_rows, candidate_rows, deleted_keys)
+                )
             except Exception as exc:
                 checks.append(
                     CheckResult(
@@ -99,11 +105,31 @@ class ValidationService:
             raise ValidationFailedError(report, report_path)
         return report, report_path
 
+    def _fetch_deleted_keys(self, entity: EntityRule, context: RunContext) -> Sequence[Row]:
+        if entity.source.deleted_column is None:
+            # No delete semantics configured for this entity, so there is
+            # genuinely nothing to verify and an empty set is the truth.
+            return ()
+        if self._tombstones is None:
+            # Deletes are configured but nothing can read them. Returning an
+            # empty set here would emit `deleted_absent` as passed while
+            # having verified nothing, which is the one thing this gate must
+            # never do. Raising instead lets validate()'s per-entity handler
+            # turn it into a failing check, matching how every other
+            # unreadable input fails closed.
+            raise ValueError(
+                f"entity {entity.name!r} configures deleted_column "
+                f"{entity.source.deleted_column!r} but no tombstone reader is available; "
+                "the deletes check cannot be verified"
+            )
+        return self._tombstones.fetch_deleted_keys(entity, context)
+
     def _compare_entity(
         self,
         entity: EntityRule,
         source_rows: Sequence[Row],
         candidate_rows: Sequence[Row],
+        deleted_keys: Sequence[Row],
     ) -> list[CheckResult]:
         checks = [
             CheckResult(
@@ -128,6 +154,8 @@ class ValidationService:
         columns = {column.name: column for column in entity.columns}
         key_columns = [columns[name] for name in entity.key_columns]
         checks.extend(self._partition_checks(entity, source_rows, candidate_rows, columns))
+        if entity.source.deleted_column is not None:
+            checks.append(self._delete_check(entity, candidate_rows, deleted_keys, key_columns))
         for column in entity.columns:
             checks.append(
                 self._result(
@@ -157,6 +185,25 @@ class ValidationService:
                 )
             )
         return checks
+
+    @staticmethod
+    def _delete_check(
+        entity: EntityRule,
+        candidate_rows: Sequence[Row],
+        deleted_keys: Sequence[Row],
+        key_columns: Sequence[ColumnRule],
+    ) -> CheckResult:
+        deleted_key_tuples = {_key_tuple(row, key_columns) for row in deleted_keys}
+        candidate_key_tuples = {_key_tuple(row, key_columns) for row in candidate_rows}
+        still_present = sorted("|".join(key) for key in deleted_key_tuples & candidate_key_tuples)
+        return CheckResult(
+            entity=entity.name,
+            name="deleted_absent",
+            check_type=CheckType.DELETE,
+            passed=not still_present,
+            expected=[],
+            actual=still_present,
+        )
 
     @staticmethod
     def _partition_checks(
@@ -196,3 +243,7 @@ class ValidationService:
             expected=expected,
             actual=actual,
         )
+
+
+def _key_tuple(row: Row, key_columns: Sequence[ColumnRule]) -> tuple[str, ...]:
+    return tuple(canonicalize(row[column.name], column.canonical_type) for column in key_columns)

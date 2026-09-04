@@ -38,6 +38,28 @@ x-airflow-common: &airflow-common
     MILLRACE_REPORTS_DIRECTORY: /opt/millrace/artifacts/reconciliation
     MILLRACE_PUSHGATEWAY_URL: ${MILLRACE_PUSHGATEWAY_URL-}
     MILLRACE_SPARK_MASTER: spark://spark-master:7077
+    # Snowflake is optional. MILLRACE_WAREHOUSE_TARGETS stays "duckdb" unless
+    # set otherwise, and every value below defaults empty, so a deployment
+    # that never touches Snowflake is unaffected.
+    #
+    # The private key path is translated rather than passed through: the host
+    # variable holds a host filesystem path, while the container sees the key
+    # through the read-only config/ mount below. `:+` substitutes the
+    # container path only when the host variable is non-empty, so a
+    # password-auth deployment still gets an empty value here. Hardcoding a
+    # non-empty path instead would defeat the settings validator's
+    # "password or key" check and send every password-auth run into
+    # FileNotFoundError.
+    MILLRACE_WAREHOUSE_TARGETS: ${MILLRACE_WAREHOUSE_TARGETS-duckdb}
+    MILLRACE_SNOWFLAKE_ACCOUNT: ${MILLRACE_SNOWFLAKE_ACCOUNT-}
+    MILLRACE_SNOWFLAKE_USER: ${MILLRACE_SNOWFLAKE_USER-}
+    MILLRACE_SNOWFLAKE_PASSWORD: ${MILLRACE_SNOWFLAKE_PASSWORD-}
+    MILLRACE_SNOWFLAKE_AUTHENTICATOR: ${MILLRACE_SNOWFLAKE_AUTHENTICATOR-}
+    MILLRACE_SNOWFLAKE_ROLE: ${MILLRACE_SNOWFLAKE_ROLE-}
+    MILLRACE_SNOWFLAKE_WAREHOUSE: ${MILLRACE_SNOWFLAKE_WAREHOUSE-}
+    MILLRACE_SNOWFLAKE_DATABASE: ${MILLRACE_SNOWFLAKE_DATABASE-}
+    MILLRACE_SNOWFLAKE_PRIVATE_KEY_PATH: ${MILLRACE_SNOWFLAKE_PRIVATE_KEY_PATH:+/opt/millrace/config/rsa_key.p8}
+    MILLRACE_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${MILLRACE_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE-}
   volumes:
     - ./airflow/dags:/opt/airflow/dags:ro
     - ./config:/opt/millrace/config:ro

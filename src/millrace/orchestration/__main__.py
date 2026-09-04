@@ -8,6 +8,7 @@ from millrace.orchestration.runtime import (
     build_candidate,
     cleanup_temporary_files,
     emit_metrics,
+    load_snowflake_silver,
     promote_candidate,
     run_spark,
     stable_run_id,
@@ -26,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument("--interval-start", required=True)
         command.add_argument("--interval-end", required=True)
     subparsers.choices["backfill-run"].add_argument("--promote", action="store_true")
+    subparsers.choices["backfill-run"].add_argument("--warehouse", default="duckdb")
     return parser
 
 
@@ -47,12 +49,15 @@ def main() -> int:
     wait_for_readiness()
     run_spark(descriptor, backfill=True)
     if arguments.command == "backfill-run":
+        warehouse = str(arguments.warehouse)
         try:
-            build_candidate(descriptor)
-            report_path = validate_candidate(descriptor)
-            test_candidate(descriptor)
+            if warehouse == "snowflake":
+                load_snowflake_silver(descriptor)
+            build_candidate(descriptor, warehouse=warehouse)
+            report_path = validate_candidate(descriptor, warehouse=warehouse)
+            test_candidate(descriptor, warehouse=warehouse)
             if bool(arguments.promote):
-                promote_candidate(descriptor, report_path)
+                promote_candidate(descriptor, report_path, warehouse=warehouse)
                 emit_metrics(descriptor)
         finally:
             cleanup_temporary_files(descriptor)

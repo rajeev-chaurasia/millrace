@@ -8,31 +8,47 @@ import yaml
 
 from millrace.contracts import RunContext
 from millrace.validation.models import ReconciliationConfig
+from millrace.warehouse.dialect import IdentifierCase
+
+__all__ = [
+    "IdentifierCase",
+    "candidate_schema",
+    "load_reconciliation_config",
+    "quote_identifier",
+    "quote_relation",
+    "render_relation",
+]
 
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _CANDIDATE_PLACEHOLDER = "{candidate_schema}"
 
 
-def quote_identifier(identifier: str) -> str:
+def quote_identifier(identifier: str, *, case: IdentifierCase = IdentifierCase.PRESERVE) -> str:
     if not _IDENTIFIER.fullmatch(identifier):
         raise ValueError(f"unsafe SQL identifier: {identifier!r}")
-    return f'"{identifier}"'
+    rendered = identifier.upper() if case is IdentifierCase.UPPER else identifier
+    return f'"{rendered}"'
 
 
-def quote_relation(relation: str) -> str:
+def quote_relation(relation: str, *, case: IdentifierCase = IdentifierCase.PRESERVE) -> str:
     parts = relation.split(".")
     if not parts or any(not part for part in parts):
         raise ValueError(f"invalid SQL relation: {relation!r}")
-    return ".".join(quote_identifier(part) for part in parts)
+    return ".".join(quote_identifier(part, case=case) for part in parts)
 
 
 def candidate_schema(context: RunContext) -> str:
     return f"candidate_{context.storage_key.split('/', maxsplit=1)[1]}"
 
 
-def render_relation(template: str, context: RunContext) -> str:
+def render_relation(
+    template: str,
+    context: RunContext,
+    *,
+    case: IdentifierCase = IdentifierCase.PRESERVE,
+) -> str:
     rendered = template.replace(_CANDIDATE_PLACEHOLDER, candidate_schema(context))
-    return quote_relation(rendered)
+    return quote_relation(rendered, case=case)
 
 
 def load_reconciliation_config(path: str | Path) -> ReconciliationConfig:
@@ -50,6 +66,7 @@ def load_reconciliation_config(path: str | Path) -> ReconciliationConfig:
 
 def _validate_identifiers(config: ReconciliationConfig) -> None:
     quote_identifier(config.control_schema)
+    quote_identifier(config.analytics_schema)
     for entity in config.entities:
         quote_relation(entity.source.relation)
         _validate_relation_template(entity.target.relation)

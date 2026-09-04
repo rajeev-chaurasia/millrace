@@ -75,7 +75,60 @@ Trigger the Airflow DAG with the requested UTC data interval. Backfills read arc
 partitions, build an isolated candidate, validate at the recorded batch cutoff, and publish only
 after success. Kafka retention does not limit a backfill once bronze data exists.
 
-Keep `max_active_runs=1` because local DuckDB permits one writer.
+Keep `max_active_runs=1` because local DuckDB permits one writer. This is a DuckDB constraint, not
+a Snowflake one; the Airflow DAG only orchestrates the DuckDB path today, so it stays in place
+regardless. A Snowflake backfill runs separately via
+`python -m millrace.orchestration backfill-run --warehouse snowflake`.
+
+## Snowflake
+
+Snowflake is a supplementary target, off by default. To run against it locally or in CI, set
+`MILLRACE_WAREHOUSE_TARGETS=duckdb,snowflake` plus every `MILLRACE_SNOWFLAKE_*` variable
+(`.env.example` documents them).
+
+Authentication: use key-pair auth (`MILLRACE_SNOWFLAKE_PRIVATE_KEY_PATH`) rather than a password
+on any account that enforces MFA. Snowflake rejects password auth outright for programmatic
+connections there (`MFA authentication is required, but none of your current MFA methods are
+supported for programmatic authentication`), and dbt-snowflake at the pinned version has no
+programmatic-access-token support, so key-pair is the only method that works for both the Python
+connector and the dbt build. `.env.example` carries the `openssl` and `ALTER USER` commands.
+Placing the key at `config/rsa_key.p8` makes it visible inside the containers automatically, since
+`config/` is already mounted there read-only.
+
+Run the backfill inside the Airflow container, not on the host: `config/orchestration.yml` points
+`spark.application` at a container path, and dbt lives in the image's `/opt/dbt-venv`.
+
+```shell
+docker compose exec -T airflow-scheduler python3 -m millrace.orchestration backfill-run \
+  --batch-id <n> --interval-start <iso> --interval-end <iso> \
+  --warehouse snowflake --promote
+```
+
+Pick an interval that spans real wall-clock ingestion time, not the demo data's business dates:
+bronze `event_date` comes from when Debezium captured the change, so an interval ending before
+today filters every row out and produces an empty, passing-looking silver snapshot.
+
+`backfill-run` computes `run_id` deterministically from `batch_id` and the interval, so running it
+again with `--warehouse duckdb` for the same three arguments builds the DuckDB candidate under the
+identical `run_id`. That is what lets `compare` address both targets' candidate schemas from one
+context:
+
+```shell
+docker compose exec -T airflow-scheduler python3 -m millrace.validation compare \
+  --targets duckdb,snowflake \
+  --run-id <run_id> --batch-id <n> --interval-start <iso> --interval-end <iso>
+```
+
+`compare` exits nonzero if either target's own validation fails, or if any individual check
+disagrees between the two, and writes `cross_engine.json` next to the per-target reconciliation
+reports.
+
+A Snowflake run failing at the load stage (`load_snowflake_silver`) means the row count `COPY
+INTO` loaded does not match the silver Parquet row count; check the Snowflake internal stage's
+file list and the `raw_<run>` schema before assuming a data problem. A Snowflake promotion failing
+partway through should never leave `analytics` half-swapped: `SnowflakePromotionService` builds the
+new views entirely in `analytics_staging` first and swaps schemas in one statement, so recovery is
+the same as any other failed run: investigate the candidate, do not touch `analytics` by hand.
 
 ## Recovery
 

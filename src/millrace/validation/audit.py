@@ -8,8 +8,9 @@ from typing import Protocol
 
 import duckdb
 
-from millrace.validation.configuration import quote_identifier
+from millrace.validation.configuration import IdentifierCase, quote_identifier
 from millrace.validation.models import ValidationReport
+from millrace.warehouse.gateway import WarehouseGateway
 
 
 class ReportSink(Protocol):
@@ -87,3 +88,85 @@ class DuckDbAuditWriter:
                 payload,
             ],
         )
+
+
+class SnowflakeAuditWriter:
+    """Snowflake equivalent of `DuckDbAuditWriter`. A separate class rather than
+    a shared base: the DDL types differ (TIMESTAMP_TZ, VARIANT), there is no
+    `INSERT OR REPLACE` on Snowflake so this uses `MERGE`, and Snowflake does
+    not enforce PRIMARY KEY, so the merge predicate is what keeps `run_id`
+    unique rather than a constraint.
+    """
+
+    def __init__(self, gateway: WarehouseGateway, control_schema: str) -> None:
+        self._gateway = gateway
+        self._schema = quote_identifier(control_schema, case=IdentifierCase.UPPER)
+
+    def ensure_schema(self) -> None:
+        self._gateway.execute(f"CREATE SCHEMA IF NOT EXISTS {self._schema}")
+        self._gateway.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._schema}.validation_runs (
+                run_id VARCHAR NOT NULL,
+                batch_id BIGINT NOT NULL,
+                interval_start TIMESTAMP_TZ NOT NULL,
+                interval_end TIMESTAMP_TZ NOT NULL,
+                checked_at TIMESTAMP_TZ NOT NULL,
+                status VARCHAR NOT NULL,
+                checks_passed INTEGER NOT NULL,
+                checks_failed INTEGER NOT NULL,
+                report_path VARCHAR NOT NULL,
+                report_json VARIANT NOT NULL
+            )
+            """
+        )
+
+    def record_validation(self, report: ValidationReport, report_path: Path) -> None:
+        self.ensure_schema()
+        payload = json.dumps(report.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
+        checks_passed = sum(check.passed for check in report.checks)
+        checks_failed = len(report.checks) - checks_passed
+        self._gateway.execute(
+            f"""
+            MERGE INTO {self._schema}.validation_runs AS target
+            USING (SELECT %s AS run_id) AS source
+            ON target.run_id = source.run_id
+            WHEN MATCHED THEN UPDATE SET
+                batch_id = %s, interval_start = %s, interval_end = %s, checked_at = %s,
+                status = %s, checks_passed = %s, checks_failed = %s, report_path = %s,
+                report_json = parse_json(%s)
+            WHEN NOT MATCHED THEN INSERT
+                (run_id, batch_id, interval_start, interval_end, checked_at, status,
+                 checks_passed, checks_failed, report_path, report_json)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, parse_json(%s))
+            """,
+            [
+                report.run_id,
+                report.batch_id,
+                report.interval_start,
+                report.interval_end,
+                report.checked_at,
+                report.status.value,
+                checks_passed,
+                checks_failed,
+                str(report_path),
+                payload,
+                report.run_id,
+                report.batch_id,
+                report.interval_start,
+                report.interval_end,
+                report.checked_at,
+                report.status.value,
+                checks_passed,
+                checks_failed,
+                str(report_path),
+                payload,
+            ],
+        )
+        # The gateway's connection uses autocommit=False. Nothing after this
+        # MERGE would otherwise trigger an implicit commit before the
+        # connection closes (unlike millrace.warehouse.snowflake_target.
+        # load_silver, where a later entity's DDL happens to commit the
+        # previous one), so a fresh connection in a separate process, such as
+        # promotion's audit-row check, would never see this row.
+        self._gateway.commit()

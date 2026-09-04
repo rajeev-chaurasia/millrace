@@ -56,11 +56,11 @@ def spark_submit_command(
     return command
 
 
-def dbt_candidate_command(config: DbtConfig, context: RunContext) -> list[str]:
+def dbt_candidate_command(config: DbtConfig, context: RunContext, *, warehouse: str) -> list[str]:
     return [
         config.executable,
         "run",
-        *_dbt_options(config),
+        *_dbt_options(config, warehouse=warehouse),
         "--select",
         config.selector,
         "--vars",
@@ -68,11 +68,11 @@ def dbt_candidate_command(config: DbtConfig, context: RunContext) -> list[str]:
     ]
 
 
-def dbt_test_command(config: DbtConfig, context: RunContext) -> list[str]:
+def dbt_test_command(config: DbtConfig, context: RunContext, *, warehouse: str) -> list[str]:
     return [
         config.executable,
         "test",
-        *_dbt_options(config),
+        *_dbt_options(config, warehouse=warehouse),
         "--select",
         config.selector,
         "--vars",
@@ -80,14 +80,14 @@ def dbt_test_command(config: DbtConfig, context: RunContext) -> list[str]:
     ]
 
 
-def _dbt_options(config: DbtConfig) -> list[str]:
+def _dbt_options(config: DbtConfig, *, warehouse: str) -> list[str]:
     return [
         "--project-dir",
         config.project_dir,
         "--profiles-dir",
         config.profiles_dir,
         "--target",
-        config.target,
+        config.target_for(warehouse),
     ]
 
 

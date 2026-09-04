@@ -33,9 +33,15 @@ class DbtConfig(StrictModel):
     executable: str = "dbt"
     project_dir: str
     profiles_dir: str
-    target: str
+    targets: dict[str, str] = Field(min_length=1)
     selector: str
     timeout_seconds: int = Field(default=1200, ge=1, le=7200)
+
+    def target_for(self, warehouse: str) -> str:
+        try:
+            return self.targets[warehouse]
+        except KeyError:
+            raise ValueError(f"no dbt target configured for warehouse {warehouse!r}") from None
 
 
 class OrchestrationConfig(StrictModel):

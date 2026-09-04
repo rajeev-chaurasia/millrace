@@ -10,7 +10,7 @@
 select
     order_id,
     customer_id,
-    cast(strftime(order_date, '%Y%m%d') as integer) as order_date_key,
+    {{ millrace_date_key('order_date') }} as order_date_key,
     order_status,
     ordered_at,
     order_total,

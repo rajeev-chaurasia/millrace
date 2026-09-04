@@ -22,7 +22,7 @@ jobs:
         with:
           enable-cache: true
           python-version: "3.12"
-      - run: uv sync --frozen --extra dev --extra dbt --extra dashboard
+      - run: uv sync --frozen --extra dev --extra dbt --extra dashboard --extra snowflake
       - run: uv run ruff format --check .
       - run: uv run ruff check .
       - run: uv run pyright
@@ -50,8 +50,15 @@ jobs:
           enable-cache: true
           python-version: "3.12"
       - run: uv sync --frozen --extra dbt --extra dev
-      - run: uv run dbt parse --project-dir dbt --profiles-dir dbt
+      - run: uv run dbt parse --project-dir dbt --profiles-dir dbt --target candidate
       - run: uv run sqlfluff lint dbt/models dbt/tests
+      # Snowflake has no live credentials in this job, but dbt parse is a
+      # static compile step that never opens a connection, so it still
+      # catches Jinja/macro errors on the Snowflake target for free. Linting
+      # against the Snowflake dialect needs a real connection (dbt-snowflake
+      # compiles by querying the warehouse) and runs in the credential-gated
+      # snowflake-cross-engine job in e2e.yml instead.
+      - run: uv run dbt parse --project-dir dbt --profiles-dir dbt --target snowflake_candidate
 
   compose:
     runs-on: ubuntu-latest

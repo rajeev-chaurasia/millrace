@@ -14,27 +14,21 @@ with bounds as (
 ),
 
 date_spine as (
-    select cast(generated_date as date) as date_day
-    from bounds
-    cross join generate_series(
-        start_date,
-        end_date,
-        interval '1 day'
-    ) as dates (generated_date)
+    {{ millrace_date_spine('bounds') }}
 )
 
 select
-    cast(strftime(date_day, '%Y%m%d') as integer) as date_key,
+    {{ millrace_date_key('date_day') }} as date_key,
     date_day,
     year(date_day) as year_number,
     quarter(date_day) as quarter_number,
     month(date_day) as month_number,
-    monthname(date_day) as month_name,
-    week(date_day) as week_number,
+    {{ millrace_month_name('date_day') }} as month_name,
+    {{ millrace_iso_week('date_day') }} as week_number,
     day(date_day) as day_of_month,
-    dayofweek(date_day) as day_of_week,
-    dayname(date_day) as day_name,
-    dayofweek(date_day) in (0, 6) as is_weekend,
+    {{ millrace_iso_dow('date_day') }} as day_of_week,
+    {{ millrace_day_name('date_day') }} as day_name,
+    {{ millrace_iso_dow('date_day') }} in (6, 7) as is_weekend,
     '{{ millrace_run_id() }}' as pipeline_run_id,
     cast({{ millrace_batch_id() }} as bigint) as pipeline_batch_id
 from date_spine

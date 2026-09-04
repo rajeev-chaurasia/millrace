@@ -1,0 +1,11 @@
+[sqlfluff]
+dialect = snowflake
+templater = dbt
+max_line_length = 100
+exclude_rules = ST06, RF04, RF06
+
+[sqlfluff:templater:dbt]
+project_dir = dbt
+profiles_dir = dbt
+profile = millrace
+target = snowflake_candidate

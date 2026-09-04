@@ -21,7 +21,9 @@ dbt:
   executable: dbt
   project_dir: dbt
   profiles_dir: dbt
-  target: candidate
+  targets:
+    duckdb: candidate
+    snowflake: snowflake_candidate
   selector: "+tag:candidate"
   timeout_seconds: 1200
 

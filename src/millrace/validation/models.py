@@ -98,6 +98,7 @@ class PublicationRule(StrictModel):
 
 class ReconciliationConfig(StrictModel):
     control_schema: str = "control"
+    analytics_schema: str = "analytics"
     entities: tuple[EntityRule, ...] = Field(min_length=1)
     publications: tuple[PublicationRule, ...] = Field(min_length=1)
 
@@ -118,6 +119,7 @@ class CheckType(StrEnum):
     PARTITION_COUNT = "partition_count"
     CHECKSUM = "checksum"
     AGGREGATE = "aggregate"
+    DELETE = "delete"
     ERROR = "error"
 
 

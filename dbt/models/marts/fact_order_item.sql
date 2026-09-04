@@ -13,7 +13,7 @@ select
     line_number,
     customer_id,
     product_id,
-    cast(strftime(order_date, '%Y%m%d') as integer) as order_date_key,
+    {{ millrace_date_key('order_date') }} as order_date_key,
     quantity,
     unit_price,
     line_amount,

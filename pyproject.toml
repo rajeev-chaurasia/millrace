@@ -20,7 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 spark = ["pyspark==4.0.1"]
-dbt = ["dbt-core>=1.10,<1.12", "dbt-duckdb>=1.10,<1.11"]
+dbt = ["dbt-core>=1.10,<1.12", "dbt-duckdb>=1.10,<1.11", "dbt-snowflake>=1.10,<1.11"]
+snowflake = ["snowflake-connector-python>=3.12,<5"]
 dashboard = ["pandas>=2.2,<3", "plotly>=6.0,<7", "streamlit>=1.42,<2"]
 dev = [
   "httpx>=0.28,<1",
@@ -85,6 +86,9 @@ omit = [
   "src/millrace/orchestration/runtime.py",
   "src/millrace/streaming/spark_job.py",
   "src/millrace/validation/__main__.py",
+  "src/millrace/warehouse/duckdb_target.py",
+  "src/millrace/warehouse/factory.py",
+  "src/millrace/warehouse/snowflake_target.py",
 ]
 
 [tool.coverage.report]

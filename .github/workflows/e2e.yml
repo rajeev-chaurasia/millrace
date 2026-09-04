@@ -35,3 +35,158 @@ jobs:
           path: compose.log
       - if: always()
         run: docker compose down --volumes --remove-orphans
+
+  # Runs only when Snowflake credentials are configured as repository secrets.
+  # The `secrets` context is not available in a job-level or step-level `if`,
+  # so whether Snowflake credentials exist has to be resolved in a step (where
+  # secrets can reach `env`) and published as an output the next job can gate
+  # on via `needs`, which `if` does accept.
+  snowflake-credentials:
+    runs-on: ubuntu-latest
+    outputs:
+      configured: ${{ steps.check.outputs.configured }}
+    steps:
+      - id: check
+        env:
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+        shell: bash
+        run: |
+          if [ -n "${SNOWFLAKE_ACCOUNT}" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "No SNOWFLAKE_ACCOUNT secret; the cross-engine job will skip." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  # Absent Snowflake credentials make this job show as skipped, not green: it
+  # must never look like a passing check it did not actually run.
+  snowflake-cross-engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: snowflake-credentials
+    if: ${{ needs.snowflake-credentials.outputs.configured == 'true' }}
+    env:
+      MILLRACE_WAREHOUSE_TARGETS: "duckdb,snowflake"
+      MILLRACE_SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+      MILLRACE_SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+      # Password auth is rejected outright for programmatic connections on
+      # any account that enforces MFA (confirmed against a real account
+      # during development). Set SNOWFLAKE_PRIVATE_KEY instead in that case;
+      # it takes priority whenever both are present, matching
+      # millrace.warehouse.snowflake_target.connect and dbt/profiles.yml.
+      MILLRACE_SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+      # config/ is what compose.yaml mounts read-only into every container at
+      # /opt/millrace/config, so writing the key here (rather than elsewhere
+      # in the workspace) makes it visible both to this job's host-side steps
+      # (dbt, sqlfluff) and to the containers, with one file and one write.
+      MILLRACE_SNOWFLAKE_PRIVATE_KEY_PATH: ${{ secrets.SNOWFLAKE_PRIVATE_KEY != '' && format('{0}/config/rsa_key.p8', github.workspace) || '' }}
+      MILLRACE_SNOWFLAKE_PRIVATE_KEY_PASSPHRASE: ${{ secrets.SNOWFLAKE_PRIVATE_KEY_PASSPHRASE }}
+      MILLRACE_SNOWFLAKE_ROLE: ${{ secrets.SNOWFLAKE_ROLE }}
+      MILLRACE_SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+      MILLRACE_SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+      # No MILLRACE_DUCKDB_PATH / S3 / Postgres overrides here on purpose.
+      # Every pipeline step below runs inside the Airflow container, which
+      # gets those from compose.yaml and reaches the warehouse volume and the
+      # service hostnames that only exist on the compose network. Setting
+      # host-side values would point `compare` at an empty DuckDB file on the
+      # runner and report a total cross-engine disagreement.
+      # The Snowflake variables above are still needed on the host for the
+      # sqlfluff step, and compose passes them through to the containers.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          python-version: "3.12"
+      - run: uv sync --frozen --extra dev --extra dbt --extra dashboard --extra spark --extra snowflake
+      # Conditional inside the shell, not in `if:`, since the `secrets`
+      # context is unavailable there. Interpolated via env rather than
+      # directly into the script so the key never lands in the command line.
+      - name: Write the Snowflake key-pair private key, if configured
+        env:
+          SNOWFLAKE_PRIVATE_KEY: ${{ secrets.SNOWFLAKE_PRIVATE_KEY }}
+        shell: bash
+        run: |
+          if [ -n "${SNOWFLAKE_PRIVATE_KEY}" ]; then
+            umask 077
+            printf '%s' "${SNOWFLAKE_PRIVATE_KEY}" > config/rsa_key.p8
+          fi
+      - run: uv run sqlfluff lint --config .sqlfluff.snowflake dbt/models dbt/tests
+      - run: cp .env.example .env
+      - run: docker compose up --detach --build
+      - run: >-
+          docker compose up --detach --no-deps --wait --wait-timeout 600
+          postgres kafka connect spark-master spark-worker minio
+          airflow-api-server airflow-scheduler airflow-dag-processor
+
+      # Loads the deterministic demo batches and runs the golden DAG once so
+      # bronze and the DuckDB candidate exist to compare Snowflake against.
+      - run: sh scripts/demo.sh
+      - name: Trigger the golden DAG run
+        run: |
+          docker compose exec -T airflow-scheduler airflow dags unpause millrace_pipeline
+          docker compose exec -T airflow-scheduler \
+            airflow dags trigger millrace_pipeline --logical-date "$(date -u +%Y-%m-%dT%H:%M:%S)"
+      - name: Wait for the golden DAG run to publish
+        run: |
+          for _ in $(seq 1 60); do
+            state=$(docker compose exec -T airflow-scheduler \
+              airflow dags list-runs millrace_pipeline --output json \
+              | python3 -c "import json,sys; runs=json.load(sys.stdin); print(runs[0]['state'] if runs else 'none')")
+            if [ "$state" = "success" ]; then exit 0; fi
+            if [ "$state" = "failed" ]; then echo "golden DAG run failed"; exit 1; fi
+            sleep 10
+          done
+          echo "timed out waiting for the golden DAG run"; exit 1
+
+      # Recovers the exact run_id/batch_id/interval the golden DAG just
+      # published, so the Snowflake backfill below builds its candidate
+      # schema under the identical run_id (stable_run_id is a pure function
+      # of these three values) and `compare` can address both targets.
+      - name: Recover the published run descriptor
+        run: |
+          docker compose exec -T airflow-scheduler python3 -c "
+          import duckdb, json
+          connection = duckdb.connect('/opt/millrace/data/millrace.duckdb', read_only=True)
+          row = connection.execute('''
+              SELECT validation.run_id, validation.batch_id, validation.interval_start, validation.interval_end
+              FROM control.validation_runs AS validation
+              JOIN control.publication_runs AS publication ON validation.run_id = publication.run_id
+              ORDER BY publication.published_at DESC LIMIT 1
+          ''').fetchone()
+          print(json.dumps({'run_id': row[0], 'batch_id': row[1], 'interval_start': row[2].isoformat(), 'interval_end': row[3].isoformat()}))
+          " > /tmp/descriptor.json
+          cat /tmp/descriptor.json
+
+      - name: Build the Snowflake candidate for the same run
+        run: |
+          run_id=$(python3 -c "import json; print(json.load(open('/tmp/descriptor.json'))['run_id'])")
+          batch_id=$(python3 -c "import json; print(json.load(open('/tmp/descriptor.json'))['batch_id'])")
+          interval_start=$(python3 -c "import json; print(json.load(open('/tmp/descriptor.json'))['interval_start'])")
+          interval_end=$(python3 -c "import json; print(json.load(open('/tmp/descriptor.json'))['interval_end'])")
+          docker compose exec -T airflow-scheduler python3 -m millrace.orchestration backfill-run \
+            --batch-id "$batch_id" --interval-start "$interval_start" --interval-end "$interval_end" \
+            --warehouse snowflake --promote
+          echo "run_id=$run_id" >> "$GITHUB_ENV"
+          echo "batch_id=$batch_id" >> "$GITHUB_ENV"
+          echo "interval_start=$interval_start" >> "$GITHUB_ENV"
+          echo "interval_end=$interval_end" >> "$GITHUB_ENV"
+
+      - name: Compare DuckDB and Snowflake against the same source snapshot
+        run: |
+          docker compose exec -T airflow-scheduler python3 -m millrace.validation compare \
+            --targets duckdb,snowflake \
+            --run-id "$run_id" --batch-id "$batch_id" \
+            --interval-start "$interval_start" --interval-end "$interval_end"
+
+      - if: always()
+        run: docker compose logs --no-color > compose-snowflake.log
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compose-logs-snowflake
+          path: |
+            compose-snowflake.log
+            artifacts/reconciliation
+      - if: always()
+        run: docker compose down --volumes --remove-orphans

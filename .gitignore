@@ -1,4 +1,8 @@
 .env
+*.p8
+*.pem
+*.key
+rsa_key.pub
 .venv/
 __pycache__/
 *.py[cod]

@@ -3,8 +3,12 @@ version: 2
 sources:
   - name: silver
     description: >
-      Deterministic retail entity state for the requested pipeline run. Files are read directly
-      from the immutable MinIO silver run prefix.
+      Deterministic retail entity state for the requested pipeline run. On DuckDB, files are
+      read directly from the immutable MinIO silver run prefix via `external_location`. On
+      Snowflake, `external_location` is not a recognized adapter feature and is ignored; instead
+      `schema` points at the per-run raw schema that `millrace.warehouse.snowflake_target`
+      populates from the same silver Parquet objects before dbt runs.
+    schema: "{{ env_var('MILLRACE_RAW_SCHEMA', 'silver') }}"
     meta:
       external_location: "{{ var('silver_root', 's3://' ~ env_var('MILLRACE_S3_BUCKET', 'millrace') ~ '/silver') }}/run_id={{ var('run_id', env_var('MILLRACE_RUN_ID', 'local')) }}/table={name}/*.parquet"
     tables:

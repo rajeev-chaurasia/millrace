@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import subprocess
@@ -37,6 +38,8 @@ from millrace.validation.configuration import (
     quote_identifier,
     quote_relation,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class RunDescriptor(TypedDict):
@@ -95,7 +98,10 @@ def wait_for_readiness() -> None:
     while time.monotonic() < deadline:
         try:
             _check_postgres(settings)
-            _check_duckdb(settings)
+            if "duckdb" in settings.enabled_warehouse_targets:
+                _check_duckdb(settings)
+            if "snowflake" in settings.enabled_warehouse_targets:
+                _check_snowflake(settings)
             _check_object_store(settings)
             return
         except Exception as exc:
@@ -114,30 +120,49 @@ def run_spark(descriptor: RunDescriptor, *, backfill: bool = False) -> None:
     )
 
 
-def build_candidate(descriptor: RunDescriptor) -> None:
+def load_snowflake_silver(descriptor: RunDescriptor) -> None:
+    """Loads the silver Parquet snapshot into Snowflake before dbt runs against it.
+    Has no DuckDB equivalent: DuckDB reads the same Parquet objects directly via
+    httpfs at query time, so this stage exists only on the Snowflake path.
+    """
+    from millrace.warehouse import open_warehouse
+    from millrace.warehouse.snowflake_target import load_silver, raw_schema
+
+    config = orchestration_config()
+    settings = get_settings()
+    context = context_from_descriptor(descriptor)
+    gateway = open_warehouse("snowflake", settings)
+    try:
+        load_silver(gateway, settings, context, temporary_directory=config.temporary_directory)
+    finally:
+        gateway.close()
+    logger.info("loaded silver snapshot into snowflake schema %s", raw_schema(context))
+
+
+def build_candidate(descriptor: RunDescriptor, *, warehouse: str = "duckdb") -> None:
     config = orchestration_config()
     context = context_from_descriptor(descriptor)
     _execute(
-        dbt_candidate_command(config.dbt, context),
+        dbt_candidate_command(config.dbt, context, warehouse=warehouse),
         timeout_seconds=config.dbt.timeout_seconds,
-        extra_environment={"MILLRACE_DBT_SCHEMA": candidate_schema(context)},
+        extra_environment=_dbt_schema_environment(context, warehouse=warehouse),
     )
 
 
-def test_candidate(descriptor: RunDescriptor) -> None:
+def test_candidate(descriptor: RunDescriptor, *, warehouse: str = "duckdb") -> None:
     config = orchestration_config()
     context = context_from_descriptor(descriptor)
     _execute(
-        dbt_test_command(config.dbt, context),
+        dbt_test_command(config.dbt, context, warehouse=warehouse),
         timeout_seconds=config.dbt.timeout_seconds,
-        extra_environment={"MILLRACE_DBT_SCHEMA": candidate_schema(context)},
+        extra_environment=_dbt_schema_environment(context, warehouse=warehouse),
     )
 
 
-def validate_candidate(descriptor: RunDescriptor) -> str:
+def validate_candidate(descriptor: RunDescriptor, *, warehouse: str = "duckdb") -> str:
     context = context_from_descriptor(descriptor)
     output = _execute(
-        _validation_command("validate", context),
+        _validation_command("validate", context, warehouse=warehouse),
         timeout_seconds=orchestration_config().dbt.timeout_seconds,
     )
     report_path = output.strip().splitlines()[-1] if output.strip() else ""
@@ -146,12 +171,26 @@ def validate_candidate(descriptor: RunDescriptor) -> str:
     return report_path
 
 
-def promote_candidate(descriptor: RunDescriptor, report_path: str) -> None:
+def promote_candidate(
+    descriptor: RunDescriptor,
+    report_path: str,
+    *,
+    warehouse: str = "duckdb",
+) -> None:
     context = context_from_descriptor(descriptor)
     _execute(
-        [*_validation_command("promote", context), "--report", report_path],
+        [*_validation_command("promote", context, warehouse=warehouse), "--report", report_path],
         timeout_seconds=orchestration_config().dbt.timeout_seconds,
     )
+
+
+def _dbt_schema_environment(context: RunContext, *, warehouse: str) -> dict[str, str]:
+    environment = {"MILLRACE_DBT_SCHEMA": candidate_schema(context)}
+    if warehouse == "snowflake":
+        from millrace.warehouse.snowflake_target import raw_schema
+
+        environment["MILLRACE_RAW_SCHEMA"] = raw_schema(context)
+    return environment
 
 
 def emit_metrics(descriptor: RunDescriptor) -> None:
@@ -178,6 +217,11 @@ def cleanup_temporary_files(descriptor: RunDescriptor) -> None:
     if destination.parent != root:
         raise ValueError("temporary run path escapes its configured root")
     shutil.rmtree(destination, ignore_errors=True)
+
+    snowflake_load_root = (root / "snowflake_load").resolve()
+    snowflake_load_destination = (snowflake_load_root / safe_run_id).resolve()
+    if snowflake_load_destination.parent == snowflake_load_root:
+        shutil.rmtree(snowflake_load_destination, ignore_errors=True)
 
 
 def context_from_descriptor(descriptor: RunDescriptor) -> RunContext:
@@ -211,12 +255,14 @@ def _execute(
     return completed.stdout
 
 
-def _validation_command(action: str, context: RunContext) -> list[str]:
+def _validation_command(action: str, context: RunContext, *, warehouse: str) -> list[str]:
     return [
         sys.executable,
         "-m",
         "millrace.validation",
         action,
+        "--warehouse",
+        warehouse,
         "--run-id",
         context.run_id,
         "--batch-id",
@@ -236,6 +282,17 @@ def _check_postgres(settings: Settings) -> None:
 def _check_duckdb(settings: Settings) -> None:
     with duckdb.connect(settings.duckdb_path) as connection:
         connection.execute("SELECT 1")
+
+
+def _check_snowflake(settings: Settings) -> None:
+    from millrace.warehouse.snowflake_target import connect
+
+    connection = connect(settings)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    finally:
+        connection.close()
 
 
 def _check_object_store(settings: Settings) -> None:
