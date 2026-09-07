@@ -33,7 +33,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      MILLRACE_DUCKDB_PATH: ${{ runner.temp }}/millrace.duckdb
+      # github.workspace, not runner.temp: the `runner` context is not
+      # available in a job-level `env:`, and using it there makes GitHub
+      # reject the whole workflow file before scheduling any job.
+      MILLRACE_DUCKDB_PATH: ${{ github.workspace }}/millrace-ci.duckdb
       MILLRACE_S3_ACCESS_KEY: local-ci
       MILLRACE_S3_SECRET_KEY: local-ci-secret
       MILLRACE_S3_ENDPOINT: localhost:9000
