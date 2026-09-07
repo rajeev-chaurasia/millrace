@@ -36,7 +36,12 @@ jobs:
       # github.workspace, not runner.temp: the `runner` context is not
       # available in a job-level `env:`, and using it there makes GitHub
       # reject the whole workflow file before scheduling any job.
-      MILLRACE_DUCKDB_PATH: ${{ github.workspace }}/millrace-ci.duckdb
+      #
+      # The filename must stay hyphen-free. dbt-duckdb derives the database
+      # name from it, so a hyphen renders relations as
+      # `millrace-ci.candidate_ci.stg_customers`, which sqlfluff cannot parse
+      # as an unquoted identifier.
+      MILLRACE_DUCKDB_PATH: ${{ github.workspace }}/millrace_ci.duckdb
       MILLRACE_S3_ACCESS_KEY: local-ci
       MILLRACE_S3_SECRET_KEY: local-ci-secret
       MILLRACE_S3_ENDPOINT: localhost:9000
